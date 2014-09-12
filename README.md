@@ -14,6 +14,10 @@ git submodule update
 To attempt to compile, ensure that https://launchpad.net/gcc-arm-embedded is in your path, then:
 ```
 cd projects/BLE_HeartRate
-cmake .
+mkdir build
+cd build
+cmake ..
 make
 ```
+
+NOTE: running cmake inside the "build" directory allows you to have an out-of-source-build. All temporary files live inside the "build" directory and the main source code is not touched
