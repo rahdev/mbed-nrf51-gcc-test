@@ -16,71 +16,31 @@
 
 #include "mbed.h"
 #include "BLEDevice.h"
-#include "ble_hrs.h"
+#include "HeartRateService.h"
+#include "BatteryService.h"
+#include "DeviceInformationService.h"
 
 BLEDevice  ble;
 DigitalOut led1(LED1);
 
-#define NEED_CONSOLE_OUTPUT 0 /* Set this if you need debug messages on the console;
-                               * it will have an impact on code-size and power consumption. */
+const static char     DEVICE_NAME[]        = "Nordic_HRM";
+static const uint16_t uuid16_list[]        = {GattService::UUID_HEART_RATE_SERVICE,
+                                              GattService::UUID_BATTERY_SERVICE,
+                                              GattService::UUID_DEVICE_INFORMATION_SERVICE};
+static volatile bool  triggerSensorPolling = false;
 
-#if NEED_CONSOLE_OUTPUT
-Serial  pc(USBTX, USBRX);
-#define DEBUG(...) { pc.printf(__VA_ARGS__); }
-#else
-#define DEBUG(...) /* nothing */
-#endif /* #if NEED_CONSOLE_OUTPUT */
-
-const static char  DEVICE_NAME[] = "Nordic_HRM";
-
-/* Heart Rate Service */
-/* Service:  https://developer.bluetooth.org/gatt/services/Pages/ServiceViewer.aspx?u=org.bluetooth.service.heart_rate.xml */
-/* HRM Char: https://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.heart_rate_measurement.xml */
-/* Location: https://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.body_sensor_location.xml */
-static uint8_t hrmCounter = 100;
-static uint8_t bpm[2] = {0x00, hrmCounter};
-GattCharacteristic hrmRate(GattCharacteristic::UUID_HEART_RATE_MEASUREMENT_CHAR, bpm, sizeof(bpm), sizeof(bpm),
-                           GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY);
-static uint8_t location = BLE_HRS_BODY_SENSOR_LOCATION_FINGER;
-GattCharacteristic hrmLocation(GattCharacteristic::UUID_BODY_SENSOR_LOCATION_CHAR,
-                               (uint8_t *)&location, sizeof(location), sizeof(location),
-                               GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ);
-GattCharacteristic *hrmChars[] = {&hrmRate, &hrmLocation, };
-GattService        hrmService(GattService::UUID_HEART_RATE_SERVICE, hrmChars, sizeof(hrmChars) / sizeof(GattCharacteristic *));
-
-static const uint16_t uuid16_list[] = {GattService::UUID_HEART_RATE_SERVICE};
-
-static volatile bool triggerSensorPolling = false; /* set to high periodically to indicate to the main thread that
-                                                    * polling is necessary. */
-static Gap::ConnectionParams_t connectionParams;
-
-void disconnectionCallback(Gap::Handle_t handle)
+void disconnectionCallback(Gap::Handle_t handle, Gap::DisconnectionReason_t reason)
 {
-    DEBUG("Disconnected handle %u!\n\r", handle);
-    DEBUG("Restarting the advertising process\n\r");
-    ble.startAdvertising();
+    ble.startAdvertising(); // restart advertising
 }
 
-void onConnectionCallback(Gap::Handle_t handle)
-{
-    DEBUG("connected. Got handle %u\r\n", handle);
-
-    connectionParams.slaveLatency = 1;
-    if (ble.updateConnectionParams(handle, &connectionParams) != BLE_ERROR_NONE) {
-        DEBUG("failed to update connection paramter\r\n");
-    }
-}
-
-/**
- * Triggered periodically by the 'ticker' interrupt.
- */
 void periodicCallback(void)
 {
     led1 = !led1; /* Do blinky on LED1 while we're waiting for BLE events */
-    triggerSensorPolling = true; /* Note that the periodicCallback() executes in
-                                  * interrupt context, so it is safer to do
-                                  * heavy-weight sensor polling from the main
-                                  * thread.*/
+
+    /* Note that the periodicCallback() executes in interrupt context, so it is safer to do
+     * heavy-weight sensor polling from the main thread. */
+    triggerSensorPolling = true;
 }
 
 int main(void)
@@ -89,23 +49,25 @@ int main(void)
     Ticker ticker;
     ticker.attach(periodicCallback, 1);
 
-    DEBUG("Initialising the nRF51822\n\r");
     ble.init();
     ble.onDisconnection(disconnectionCallback);
-    ble.onConnection(onConnectionCallback);
 
-    ble.getPreferredConnectionParams(&connectionParams);
+    /* Setup primary service. */
+    uint8_t hrmCounter = 100;
+    HeartRateService hrService(ble, hrmCounter, HeartRateService::LOCATION_FINGER);
 
-    /* setup advertising */
+    /* Setup auxiliary services. */
+    BatteryService           battery(ble);
+    DeviceInformationService deviceInfo(ble, "ARM", "Model1", "SN1", "hw-rev1", "fw-rev1", "soft-rev1");
+
+    /* Setup advertising. */
     ble.accumulateAdvertisingPayload(GapAdvertisingData::BREDR_NOT_SUPPORTED | GapAdvertisingData::LE_GENERAL_DISCOVERABLE);
-    ble.accumulateAdvertisingPayload(GapAdvertisingData::COMPLETE_LIST_16BIT_SERVICE_IDS, (uint8_t*)uuid16_list, sizeof(uuid16_list));
-    ble.accumulateAdvertisingPayload(GapAdvertisingData::HEART_RATE_SENSOR_HEART_RATE_BELT);
+    ble.accumulateAdvertisingPayload(GapAdvertisingData::COMPLETE_LIST_16BIT_SERVICE_IDS, (uint8_t *)uuid16_list, sizeof(uuid16_list));
+    ble.accumulateAdvertisingPayload(GapAdvertisingData::GENERIC_HEART_RATE_SENSOR);
     ble.accumulateAdvertisingPayload(GapAdvertisingData::COMPLETE_LOCAL_NAME, (uint8_t *)DEVICE_NAME, sizeof(DEVICE_NAME));
     ble.setAdvertisingType(GapAdvertisingParams::ADV_CONNECTABLE_UNDIRECTED);
-    ble.setAdvertisingInterval(160); /* 100ms; in multiples of 0.625ms. */
+    ble.setAdvertisingInterval(1600); /* 1000ms; in multiples of 0.625ms. */
     ble.startAdvertising();
-
-    ble.addService(hrmService);
 
     while (true) {
         if (triggerSensorPolling) {
@@ -118,12 +80,7 @@ int main(void)
                 hrmCounter = 100;
             }
 
-            if (ble.getGapState().connected) {
-                /* First byte = 8-bit values, no extra info, Second byte = uint8_t HRM value */
-                /* See --> https://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.heart_rate_measurement.xml */
-                bpm[1] = hrmCounter;
-                ble.updateCharacteristicValue(hrmRate.getHandle(), bpm, sizeof(bpm));
-            }
+            hrService.updateHeartRate(hrmCounter);
         } else {
             ble.waitForEvent();
         }

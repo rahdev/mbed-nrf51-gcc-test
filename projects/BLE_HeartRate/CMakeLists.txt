@@ -43,11 +43,29 @@ macro (add_sources)
     endif()
 endmacro()
 
-# decide about the actual compilers to be used ...
-set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
-set(CMAKE_C_COMPILER   arm-none-eabi-gcc)
-set(SIZE_COMMAND       arm-none-eabi-size)
-set(OBJCOPY_COMMAND       arm-none-eabi-objcopy)
+# Decide about the actual compilers to be used; uncomment one of the following.
+set(TOOLCHAIN armgcc)
+# set(TOOLCHAIN armcc)
+
+if (TOOLCHAIN STREQUAL "armcc")
+    set(TOOLCHAIN_SYSROOT /home/rgrover/ext/arm-toolchains/rvct/ARMCompiler_5.03_117_Linux)
+    set(CMAKE_CXX_COMPILER ${TOOLCHAIN_SYSROOT}/bin/armcc)
+    set(CMAKE_C_COMPILER   ${TOOLCHAIN_SYSROOT}/bin/armcc)
+    set(SIZE_COMMAND       size)
+
+    SET(CMAKE_CXX_LINK_FLAGS "--libpath=${TOOLCHAIN_SYSROOT}/lib --info=totals --list=.link_totals.txt --scatter ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_ARM_STD/TARGET_MCU_NORDIC_16K/nRF51822.sct")
+
+    SET(CMAKE_CXX_LINK_EXECUTABLE
+        "armlink <CMAKE_CXX_LINK_FLAGS> <OBJECTS> -o <TARGET>")
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
+    set(CMAKE_C_COMPILER   arm-none-eabi-gcc)
+    set(SIZE_COMMAND       arm-none-eabi-size)
+    set(OBJCOPY_COMMAND    arm-none-eabi-objcopy)
+else()
+    message(FATAL_ERROR "failed to match against known toolchains")
+endif()
+
 set(MAIN_TARGET        ${PROJECT_NAME}.elf)
 enable_language(ASM)
 
@@ -72,7 +90,6 @@ include_directories(
     ${MBED_SRC_PATH}/targets/cmsis
     ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC
     ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822
-    ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM
     ${MBED_SRC_PATH}/targets/hal
     ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC
     ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822
@@ -81,6 +98,7 @@ include_directories(
     ${BLE_API_SRC_PATH}
     ${BLE_API_SRC_PATH}/public
     ${BLE_API_SRC_PATH}/common
+    ${BLE_API_SRC_PATH}/services
     ${NRF51822_SRC_PATH}
     ${NRF51822_SRC_PATH}/btle
     ${NRF51822_SRC_PATH}/btle/custom
@@ -93,66 +111,86 @@ include_directories(
     ${NRF51822_SRC_PATH}/nordic/nrf-sdk/ble/rpc
     ${NRF51822_SRC_PATH}/nordic/nrf-sdk/s110
     ${NRF51822_SRC_PATH}/nordic/nrf-sdk/sd_common
+    ${NRF51822_SRC_PATH}/nordic/nrf-sdk/bootloader_dfu
 )
+if (TOOLCHAIN STREQUAL "armcc")
+    include_directories(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_ARM_STD)
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    include_directories(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM)
+endif()
 
 # Generic compiler flags
 add_definitions(
-    -mcpu=cortex-m0 -mthumb
-    -Wabi
-    -Wno-error=switch
-    -Wno-switch
-    -fdata-sections
-    -ffunction-sections
-    -fmessage-length=0
-    -Wall
-    -fno-common
-    -fno-exceptions
-    -funsigned-bitfields
-    -mcpu=cortex-m0
-    -mthumb
-    -O3
+    -O2
     -DTARGET_NRF51822
     -DTARGET_M0
     -DTARGET_NORDIC
-    -DTOOLCHAIN_GCC_CS
-    -DTOOLCHAIN_GCC
     -D__CORTEX_M0
     -DARM_MATH_CM0
     -D__MBED__=1
-    -DTARGET_ARCH_BLE 
-    -DTARGET_MCU_NRF51822 
-    -DTOOLCHAIN_GCC_ARM  
-    -DMBED_BUILD_TIMESTAMP=1409211084.44 
-    -DTARGET_FF_ARDUINO
-    -Wa,-adhlns=$@.lst
-    -g3
-    -ggdb
-    -mcpu=cortex-m0 
-    -mthumb 
-    -Wl,--gc-sections 
-    -Wl,--wrap=main 
-    --specs=nano.specs
-    -lstdc++ 
-    -lsupc++ 
-    -lm 
-    -lc 
-    -lgcc 
-    -lnosys
+    -DMBED_BUILD_TIMESTAMP=1399904910.34
+    -DMBED_USERNAME=rohgro01
 )
 
-# Language specifc compiler flags.
-set(CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -fno-rtti -fno-threadsafe-statics")
-set(CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -std=gnu99 -Wno-pointer-sign -Wno-pointer-to-int-cast")
-set(CMAKE_ASM_FLAGS
-    "${COMMON_COMPILE_FLAGS} -x assembler-with-cpp")
+if (TOOLCHAIN STREQUAL "armcc")
+    add_definitions(
+        --cpu=Cortex-M0
+        --gnu
+        -Otime
+        --split_sections
+        --apcs=interwork
+        --brief_diagnostics
+        --restrict
+        --md
+        --no_depend_system_headers
+        -DTOOLCHAIN_ARM_STD
+        -DTOOLCHAIN_ARM
+    )
 
-SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS
-    -T${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/NRF51822.ld)
-SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS
-    "${CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS} -mcpu=cortex-m0 -mthumb -Wl,--gc-sections")
+    # Language specifc compiler flags.
+    set(CMAKE_CXX_FLAGS
+        "${CMAKE_CXX_FLAGS} --cpp --no_rtti")
+    set(CMAKE_C_FLAGS
+        "${CMAKE_C_FLAGS} --c99")
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    add_definitions(
+        -mcpu=cortex-m0
+        -mthumb
+        -Wall
+        -Wextra
+        -Wno-unused-parameter
+        -Wno-missing-field-initializers
+        -Wno-error=switch
+        -Wno-switch
+        -Wa,-adhlns=$@.lst
+        -fmessage-length=0
+        -fno-builtin
+        -ffunction-sections
+        -fdata-sections
+        -fno-delete-null-pointer-checks
+        -fomit-frame-pointer
+        -fno-common
+        -funsigned-bitfields
+        -DTOOLCHAIN_GCC_ARM
+        -DTOOLCHAIN_GCC
+        -DTARGET_NRF51822_MKIT
+        -DTARGET_MCU_NRF51822
+        -DTARGET_MCU_NORDIC_16K
+    )
 
+    # Language specifc compiler flags.
+    set(CMAKE_CXX_FLAGS
+        "${CMAKE_CXX_FLAGS} -std=gnu++98 -fno-rtti -fno-exceptions -fno-threadsafe-statics")
+    set(CMAKE_C_FLAGS
+        "${CMAKE_C_FLAGS} -std=gnu99 -Wno-pointer-sign -Wno-pointer-to-int-cast")
+    set(CMAKE_ASM_FLAGS
+        "${COMMON_COMPILE_FLAGS} -x assembler-with-cpp")
+
+    SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS
+        -T${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/TARGET_MCU_NORDIC_16K/NRF51822.ld)
+    SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS
+        "${CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS} -Wl,--gc-sections -Wl,--wrap,main -Wl,-Map=${PROJECT_NAME}.map -mcpu=cortex-m0 -mthumb --specs=nano.specs -lstdc++ -lsupc++ -lm -lc -lgcc -lnosys -lstdc++ -lsupc++ -lm -lc -lgcc -lnosys")
+endif()
 
 # A macro to collect local sources into ${SRCS}.
 # This variable gets propagated to the parent scope and is ultimately used in
@@ -176,12 +214,19 @@ file(GLOB MBED_SRC_SOURCES
           ${MBED_SRC_PATH}/common/*.c
           ${MBED_SRC_PATH}/common/*.cpp
           ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/*.c
-          ${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/sys.cpp
           ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822/*.c
+          ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822/Lib/app_common/*.c
     )
 add_sources(${MBED_SRC_SOURCES})
+if (TOOLCHAIN STREQUAL "armcc")
+    add_sources(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_ARM_STD/sys.cpp)
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    #add_sources(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/sys.cpp)
+endif()
+
 file(GLOB BLE_API_SOURCES
           ${BLE_API_SRC_PATH}/common/*.cpp
+          ${BLE_API_SRC_PATH}/services/*.cpp
     )
 add_sources(${BLE_API_SOURCES})
 file(GLOB NRF51822_SOURCES
@@ -192,10 +237,15 @@ file(GLOB NRF51822_SOURCES
           ${NRF51822_SRC_PATH}/nordic/app_common/*.cpp
           ${NRF51822_SRC_PATH}/nordic/ble/*.cpp
           ${NRF51822_SRC_PATH}/nordic/ble/ble_services/*.cpp
+          ${NRF51822_SRC_PATH}/nordic/bootloader_dfu/*.c
     )
 add_sources(${NRF51822_SOURCES})
 
-add_sources(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/startup_NRF51822.s)
+if (TOOLCHAIN STREQUAL "armcc")
+    add_sources(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_ARM_STD/TARGET_MCU_NORDIC_16K/startup_nRF51822.s)
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    add_sources(${MBED_SRC_PATH}/targets/cmsis/TARGET_NORDIC/TARGET_MCU_NRF51822/TOOLCHAIN_GCC_ARM/startup_NRF51822.s)
+endif()
 
 ############################################################################
 # By now, we've traversed all subdirectories and have collected everything that
@@ -206,11 +256,22 @@ add_executable(${MAIN_TARGET} ${SRCS})
 
 # Add a post-build dependency like printing size of the
 # resulting binary and copying to the target.
-add_custom_command(
-    TARGET ${MAIN_TARGET}
-    COMMAND ${SIZE_COMMAND} ${MAIN_TARGET}
-    #COMMAND ${TOOLCHAIN_SYSROOT}/bin/fromelf --bin -o ${PROJECT_NAME}.bin ${MAIN_TARGET} # convert .elf to .bin
-    COMMAND ${OBJCOPY_COMMAND} ${MAIN_TARGET}  -O binary ${PROJECT_NAME}.bin  # convert .elf to .bin
-    COMMAND srec_cat ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822/Lib/s110_nrf51822_7_0_0/s110_nrf51822_7.0.0_softdevice.hex -intel ${PROJECT_NAME}.bin -binary -offset 0x16000 -o combined.hex -intel
-    # follow this by copying the resulting combined.hex onto the target (possibly over USB)
-)
+if (TOOLCHAIN STREQUAL "armcc")
+    add_custom_command(
+        TARGET ${MAIN_TARGET}
+        COMMAND ${SIZE_COMMAND} ${MAIN_TARGET}
+        COMMAND ${TOOLCHAIN_SYSROOT}/bin/fromelf --i32combined -o ${PROJECT_NAME}.hex ${MAIN_TARGET} # convert .elf to .hex (redundancy: only one of either .hex or .bin is needed)
+        COMMAND ${TOOLCHAIN_SYSROOT}/bin/fromelf --bin -o ${PROJECT_NAME}.bin ${MAIN_TARGET} # convert .elf to .bin
+        COMMAND srec_cat ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822/Lib/s110_nrf51822_7_1_0/s110_nrf51822_7.1.0_softdevice.hex -intel ${PROJECT_NAME}.bin -binary -offset 0x16000 -o combined.hex -intel
+        # follow this by copying the resulting combined.hex onto the target (possibly over USB)
+    )
+elseif(TOOLCHAIN STREQUAL "armgcc")
+    add_custom_command(
+        TARGET ${MAIN_TARGET}
+        COMMAND ${SIZE_COMMAND} ${MAIN_TARGET}
+        COMMAND arm-none-eabi-objcopy -O ihex ${MAIN_TARGET} ${PROJECT_NAME}.hex # convert .elf to .hex (redundancy: only one of either .hex or .bin is needed)
+        COMMAND arm-none-eabi-objcopy -O binary ${MAIN_TARGET} ${PROJECT_NAME}.bin # convert .elf to .hex
+        COMMAND srec_cat ${MBED_SRC_PATH}/targets/hal/TARGET_NORDIC/TARGET_MCU_NRF51822/Lib/s110_nrf51822_7_1_0/s110_nrf51822_7.1.0_softdevice.hex -intel ${PROJECT_NAME}.bin -binary -offset 0x16000 -o combined.hex -intel
+        # follow this by copying the resulting combined.hex onto the target (possibly over USB)
+    )
+endif()
